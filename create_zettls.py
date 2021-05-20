@@ -62,7 +62,7 @@ class process_header():
 
     def __init__(self,line):
 
-        self.buffer = line;
+        self.buffer = "";
 
     def add_line(self,line):
 
@@ -90,9 +90,9 @@ class zettels:
         self.header["id"] = id
         self.header["title"] = title
         yaml.dump(self.header,self.f,encoding='utf-8',allow_unicode=True,
-                  explicit_start=True,explicit_end=True, sort_keys=False,
+                  explicit_start=True,explicit_end=False, sort_keys=False,
                   indent=True)
-        self.f.write("\n\n")
+        self.f.write("---\n\n")
         self.f.write(f"#### {title}\n")
 
     def add_line(self,line):
@@ -112,10 +112,10 @@ class index():
         title = header["title"]
         header["id"] = id
         yaml.dump(header,self.f,encoding='utf-8',allow_unicode=True,
-                  explicit_start=True,explicit_end=True, sort_keys=False,
+                  explicit_start=True,explicit_end=False, sort_keys=False,
                   indent=True)
-        self.f.write("\n\n")
-        self.f.write(f"## {title}\n\n")
+        self.f.write("---\n\n")
+        self.f.write(f"## {title}\n")
         self.id = id
 
     def add_line(self,line):
@@ -163,12 +163,14 @@ while line:
             create_header = process_header(line)
             state = state.HEADER
     elif state == stage.HEADER:
-        create_header.add_line(line)
         if key == '---' or key ==  '...': # We finished the header with ... or ---
             header = create_header.get_header()
             toc = index(fid.next_id(), header) # Creates the Index or TOC file
             ztl = zettels(output_dir,header,toc.id) # Initializes the writting of Zettls
             state = stage.BODY
+        else:
+            create_header.add_line(line)
+
     elif state == stage.BODY:
         if key == 'zettl':
             zid = fid.next_id()
