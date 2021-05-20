@@ -196,6 +196,8 @@ while line:
 ztl.close_zettl()
 toc.close_index()
 
+os.rename(input_file_name,input_file_name+".bak")
+
 
 
 
