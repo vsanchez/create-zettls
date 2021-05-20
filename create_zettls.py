@@ -6,135 +6,136 @@ import sys
 import re
 import yaml
 import datetime
-
-def read_header(buffer):
-    global back_link
-
-    header = yaml.safe_load(buffer)
-    back_link = "[["+str(header["id"])+"]]"+" "+header["title"]
-
-    index_file.write(back_link)
-    index_file.write('\n\n')
-
-    return header
+from enum import Enum
 
 
-def _parse_line(line):
-    """
-    Do a regex search against all defined regexes and
-    return the key and match result of the first matching regex
+class stage(Enum):
+    """ Defines the states of the process """
 
-    """
+    START = 1
+    HEADER = 2
+    BODY = 3
+    ZETTL = 4
 
-    for key, rx in rx_dict.items():
-        match = rx.search(line)
-        if match:
-            return key, match
-    # if there are no matches
-    return None, None
+class parser():
+    """ Reads lines from the input file and detects events """
 
+    def __init__(self, file):
 
+        self.f = open(file,'r')
+        self.re = {
+            '---': re.compile(r'---'),
+            '...': re.compile(r'\.\.\.'),
+            'zettl': re.compile(r'#### (?P<title>.*)\n'),
+        }
 
-def new_id():
-    global num_zettl
-    id = first_id+"{:02}".format(num_zettl)
-    num_zettl += 1
-    return id
+    def next_line(self):
+        """ Reads the line and finds matches """
 
+        line = self.f.readline()
 
+        key = None
+        title = None
 
+        for key, rx in self.re.items():
+            match = rx.search(line)
+            if match:
+                if key == "zettl":
+                    title = match.group('title').replace(':','-')
+                return line,key,title
+        return line,None,None
 
-def create_zettl(title):
-    global header
+class fileid():
 
-    id = new_id()
-    file_name = output_dir+"/"+id+".md"
-    file = open(file_name,"w")
-    header["id"] = id
-    header["title"] = title
-    yaml.dump(header,file,encoding='utf-8',allow_unicode=True,
-              explicit_start=True,explicit_end=True,
-              indent=True)
+    def __init__(self):
 
-    index_file.write("[["+str(header["id"])+"]]"+" "+header["title"]+"\n")
+        now = datetime.datetime.now()
+        self.first_id = now.strftime("%Y%m%d%H%M")
+        self.num_zettl = 0
 
-    return file
+    def next_id(self):
+        id = self.first_id+"{:02}".format(self.num_zettl)
+        self.num_zettl += 1
+        return id
 
+class process_header():
 
-def parse(state,file):
+    def __init__(self,line):
 
-    global header
+        self.buffer = line;
 
-    line = file.readline()
+    def add_line(self,line):
 
-    while line:
-        key,match = _parse_line(line)
+        self.buffer += line;
 
-        if key:
-            print(key, match)
-            if key == "zettl":
-                title = match.group('title')
-                if state == "start":
-                    state = "zettl"
-                    zettl_file = create_zettl(title)
-                    zettl_file.write('\n\n')
-                    zettl_file.write(back_link)
-                    zettl_file.write('\n\n')
-                    zettl_file.write(line)
+    def get_header(self):
+        return yaml.safe_load(self.buffer)
 
-                elif state == "zettl":
-                    #found the start of the next zettel, we continue with teh Zettl state till the end
-                    zettl_file.close()
-                    zettl_file = create_zettl(title)
-                    zettl_file.write('\n\n')
-                    zettl_file.write(back_link)
-                    zettl_file.write('\n\n')
-                    zettl_file.write(line)
-            elif key == "start_yaml":
-                if state =="start":
-                    state="header"
-                    header_buffer = line
-            elif key == "end_yaml":
-                if state == "header":
-                    # unpack
-                    header_buffer += line
-                    header = read_header(header_buffer)
-                    print(header)
-                    state = "start"
-                else:
-                    print("ups no acabó el header")
-        else:
-            if state == "header":
-                header_buffer += line
-            elif state == "zettl":
-                zettl_file.write(line)
+class zettels:
+    """ Creates the new zettel """
 
-        line = file.readline()
-    zettl_file.close()
-    index_file.close()
+    def __init__(self,path,header,back_link):
 
+        # Store session long data
 
+        self.path = path
+        self.header = header
+        self.back_link = back_link
+        self.index_title = header["title"]
+
+    def new_zettl(self,id,title):
+
+        file_name = self.path+"/"+id+".md"
+        self.f = open(file_name,"w")
+        self.header["id"] = id
+        self.header["title"] = title
+        yaml.dump(self.header,self.f,encoding='utf-8',allow_unicode=True,
+                  explicit_start=True,explicit_end=True, sort_keys=False,
+                  indent=True)
+        self.f.write("\n\n")
+        self.f.write(f"#### {title}\n")
+
+    def add_line(self,line):
+        self.f.write(line)
+
+    def close_zettl(self):
+        self.f.write("\n\n")
+        self.f.write("##### Origin of Zettl\n\n")
+        self.f.write(f"[[{self.back_link}]] {self.index_title}")
+        self.f.close()
+
+class index():
+
+    def __init__(self,id,header):
+        file_name = id+".md"
+        self.f = open(file_name,"w")
+        title = header["title"]
+        header["id"] = id
+        yaml.dump(header,self.f,encoding='utf-8',allow_unicode=True,
+                  explicit_start=True,explicit_end=True, sort_keys=False,
+                  indent=True)
+        self.f.write("\n\n")
+        self.f.write(f"## {title}\n\n")
+        self.id = id
+
+    def add_line(self,line):
+        self.f.write(line)
+
+    def add_link(self,id,title):
+
+        self.f.write(f"[[{id}]] {title}\n")
+
+    def close_index(self):
+        self.f.close()
+
+# Main program
 
 if len(sys.argv) < 2:
     print("Please provide file name of document to cut")
     exit()
 
 input_file_name = sys.argv[1] # First argv is command name, second the file to process
-output_dir = './out'
-
-# Statistics and global variables
-files_created = 0
-files_processed = 0
-index_file_name = "index.md"
-header = {}
-back_link = ""
-
-# No seconds because it could be too fast
-
-now = datetime.datetime.now()
-first_id = now.strftime("%Y%m%d%H%M")
-num_zettl = 0
-
+output_dir = './out' #default if not specified
 
 if len(sys.argv) > 2:
     print("Output dir given! Using " + sys.argv[2])
@@ -145,22 +146,65 @@ if not os.path.exists(output_dir):
     print("Output directory does not exist! Creating ...")
     os.makedirs(output_dir)
 
-file = open(input_file_name)
 
-#    set up regular expressions
-# use https://regexper.com to visualise these if required
+fid = fileid()  # Initializes files ID
 
-rx_dict = {
-    'start_yaml': re.compile(r'---'),
-    'end_yaml': re.compile(r'\.\.\.'),
-    'zettl': re.compile(r'#### (?P<title>.*)\n'),
-}
+state = stage.START
 
-state = 'start'
+p = parser(input_file_name)
 
-index_file = open(index_file_name,"w")
+line,key,title = p.next_line()
 
-parse(state,file)
+while line:
+
+    if state == stage.START:
+        # Will disregard anything before the YAML header
+        if key == '---':
+            create_header = process_header(line)
+            state = state.HEADER
+    elif state == stage.HEADER:
+        create_header.add_line(line)
+        if key == '---' or key ==  '...': # We finished the header with ... or ---
+            header = create_header.get_header()
+            toc = index(fid.next_id(), header) # Creates the Index or TOC file
+            ztl = zettels(output_dir,header,toc.id) # Initializes the writting of Zettls
+            state = stage.BODY
+    elif state == stage.BODY:
+        if key == 'zettl':
+            zid = fid.next_id()
+            ztl.new_zettl(zid, title)
+            toc.add_link(zid,title)
+            state = stage.ZETTL
+        else:
+            toc.add_line(line) # Add lines up to the first Zettl
+
+    elif state == stage.ZETTL:
+        if key == 'zettl': # Next zettl found, close current
+            ztl.close_zettl()
+            zid = fid.next_id()
+            ztl.new_zettl(zid, title)
+            toc.add_link(zid,title)
+        else:
+            ztl.add_line(line)
+    else:
+        sys.exit("Unkown state! %s".format(state))
+
+    line,key,title = p.next_line()
+
+ztl.close_zettl()
+toc.close_index()
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
